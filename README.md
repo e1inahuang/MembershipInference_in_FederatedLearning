@@ -1,68 +1,131 @@
-# MembershipInference_in_FederatedLearning
+````markdown
+# Membership Inference Attack on Federated Learning (NIST PPFL Genomics)
 
-Membership Inference Attacks in Federated Learning
-Investigating the privacy-utility trade-off in federated learning through membership inference attacks (MIA) on healthcare data.
-Authors: Elina Yutong Huang, Isabel Agadagba, Cole Callahan
-Course: Engineering Privacy, Carnegie Mellon University
-Overview
-Federated learning (FL) promises collaborative model training without sharing raw data — but how private is it really? This project puts that claim to the test by launching black-box membership inference attacks against FL models trained on medical data, measuring whether an adversary can determine if a specific patient record was used during training.
-We find that a fine-tuned federated model can outperform its centralized counterpart in accuracy (75.97% vs. 70.13%) while simultaneously exhibiting higher vulnerability to membership inference — a result with real implications for healthcare ML deployments.
-Key Findings
+Black-box Membership Inference Attack (MIA) against CNN target models trained on the **NIST PPFL Soybean Genomics** dataset under three privacy regimes (No-DP / DP ε=10 / DP ε=200). Implemented in PyTorch with IBM's [Adversarial Robustness Toolbox (ART)](https://github.com/Trusted-AI/adversarial-robustness-toolbox).
 
-Fine-tuned FL > Centralized: Careful hyperparameter tuning (15 clients, balanced data, batch size 16, lr=0.01) pushed the federated model past centralized performance, challenging the assumption that privacy always costs utility.
-FL is more vulnerable to MIA: The federated model showed an attacker advantage of 0.2497 vs. 0.1356 for the centralized model — FL's distributed nature alone is not sufficient privacy protection.
-Data skew matters: Unbalanced client data introduced significant performance volatility, highlighting that real-world institutional data heterogeneity is a critical design consideration.
-Tuning > Complexity: Performance gains came from fitting the right configuration, not from architectural changes.
+> **Course context:** CMU — Engineering Privacy (final project). Group members: Elina Yutong Huang, Isabel Agadagba, Cole Callahan.
 
-Dataset
-Pima Indians Diabetes Database — 768 samples, 8 clinical features (glucose, BMI, age, etc.), binary classification (diabetic vs. non-diabetic). Chosen for its health sensitivity and suitability for privacy studies.
-Architecture
-Federated Learning Pipeline
+---
 
-Built with TensorFlow Federated (TFF)
-Keras sequential model with dense layers, ReLU, dropout, sigmoid output
-Federated Averaging (tff.learning.build_federated_averaging_process)
-Data partitioned across simulated clients (3 / 7 / 15 configurations tested)
+## Background
 
-Hyperparameter Sweep
-24 configurations tested across:
-ParameterValuesClient count3, 7, 15Data distributionBalanced, SkewedBatch size16, 32Learning rate0.001, 0.01
-Best config: 15 clients, balanced, batch 16, lr=0.01 → 75.97% accuracy, AUC 0.8265
-Membership Inference Attack
+The project originally targeted the **Pima Indians Diabetes** dataset with a TensorFlow Federated (TFF) pipeline and ART-based MIA. Mid-project we hit unresolvable version conflicts between `tensorflow-federated ≤ 2.17`, `numpy ≤ 1.25`, and `adversarial-robustness-toolbox ≥ 2.13`. To unblock the attack experiments, this branch **pivots to the NIST PPFL reference setup** — pre-trained CNN target models on soybean genomic records — which is fully PyTorch and plays cleanly with ART. The TFF/Pima branch lives in the companion repo [e1inahuang/MembershipInference_in_FederatedLearning](https://github.com/e1inahuang/MembershipInference_in_FederatedLearning); this repo is the ART/CNN branch documented in the notebook.
 
-Library: tensorflow_privacy.privacy.privacy_tests.membership_inference_attack
-Strategies: Threshold Attack, Logistic Regression
-Input: Prediction probabilities + true labels from train/test splits
-Originally explored IBM's Adversarial Robustness Toolbox (ART), switched to TF-Privacy due to TFF/TF version constraints
+Reference setup: <https://github.com/rivera-lanasm/nist_ppfl/blob/master/NIST_PPFL_problem1_202503/submission/README.md>
 
-Results Summary
-ModelAccuracyAttacker AdvantageAUC (MIA)Centralized70.13%0.13560.5070Federated (baseline)74.03%0.24970.4556Federated (fine-tuned)75.97%——
-Fine-tuned MIA results pending due to TF/NumPy dependency conflicts in the privacy test suite.
-Project Structure
-├── MembershipInferenceFL.ipynb   # NIST Genomics PPFL red team exercise (ART-based MIA)
-├── federated_learning.ipynb      # Main FL pipeline: training, tuning, MIA evaluation
-├── attack_targets/               # Pre-trained target models (CNN, DPCNN variants)
-├── utils.py                      # Data loading, model loading, attack model helpers
-└── README.md
-Setup
-bashpip install tensorflow tensorflow-federated tensorflow-privacy
-pip install numpy pandas matplotlib seaborn scikit-learn
-The notebook runs in Google Colab with standard GPU runtime.
-Tech Stack
+---
 
-TensorFlow / TensorFlow Federated (TFF)
-TensorFlow Privacy (MIA module)
-IBM Adversarial Robustness Toolbox (ART) — for NIST genomics exercise
-PyTorch + torchvision (NIST attack models)
-pandas, NumPy, matplotlib, seaborn
+## Task
 
-Limitations & Future Work
+Given a federated learning system with **4 clients** each holding a disjoint shard of soybean genomic data (125,766 features per record), determine — for a set of *challenge records* — whether each record was part of some client's training set, and if so, **which client**. The attacker has only black-box access to each client's trained model (logits on chosen inputs).
 
-Complete MIA evaluation on the fine-tuned federated model (blocked by dependency conflicts)
-Integrate differential privacy (DP-SGD) into the federated pipeline
-Test on larger, more diverse medical datasets
-Explore white-box attack strategies for deeper privacy analysis
-Investigate personalized federated learning techniques
+---
 
-License
-Academic project — Carnegie Mellon University, Spring 2025.
+## Models Evaluated
+
+Three pre-trained target models per client are loaded from `.torch` checkpoints. Architectures live in `attack_targets/{cnn,dpcnn10,dpcnn200}/model.py`:
+
+| Privacy type | Directory          | DP budget (ε) | Description                |
+|--------------|--------------------|:-------------:|----------------------------|
+| `cnn`        | `attack_targets/cnn/`        | — (no DP)     | Baseline 1-D CNN           |
+| `dpcnn10`    | `attack_targets/dpcnn10/`    | 10            | Differentially-private CNN |
+| `dpcnn200`   | `attack_targets/dpcnn200/`   | 200           | Differentially-private CNN |
+
+Attack model: `art.attacks.inference.membership_inference.MembershipInferenceBlackBox`, instantiated per client/target via `utils.build_attack_model(task_model, num_data_features, hyperparameters_path)`.
+
+---
+
+## Data Layout
+
+Per client the loader expects three record files plus the trained model and its hyperparameters:
+
+```
+attack_targets/
+├── cnn/
+│   ├── cnn_challenge_records.dat
+│   └── client_<i>/
+│       ├── cnn_<i>.torch
+│       ├── cnn_<i>_relevant_records.dat     # members
+│       ├── cnn_<i>_external_records.dat     # non-members
+│       └── cnn_<i>_hyperparameters.json
+├── dpcnn10/                                  # same layout, filenames use `dpcnn_<i>` prefix
+└── dpcnn200/                                 # same layout, filenames use `dpcnn_<i>` prefix
+```
+
+Record counts (relevant / external) — Client 1: 73/64, Client 2: 95/83, Client 3: 59/52, Client 4: 23/20. Client 4 also ships `cnn_4_challenge_members.json` (ground truth for the challenge set, used for validation).
+
+---
+
+## Pipeline
+
+1. **Load** target model, relevant records, external records, hyperparameters via `utils.load_model` / `utils.load_data` / `utils.load_path_set`.
+2. **Wrap** the target in an ART `PyTorchClassifier`.
+3. **Train attack model** with `MembershipInferenceBlackBox.fit(x=rel_x, y=rel_y, test_x=ext_x, test_y=ext_y, pred=rel_preds, test_pred=ext_preds)` — members = relevant set, non-members = external set. Features: target-model logits + raw (x, y).
+4. **Score challenge records** against all 4 client attack models; take argmax probability across clients, threshold at **0.5** — records below the threshold are assigned class `0` ("no client").
+5. **Emit submission** as `{privacy_type}_submission_file.csv` with columns `index, prediction`.
+
+---
+
+## Experiments
+
+### Part 1 — Compare the three privacy regimes
+
+`compare_models()` runs `evaluate_membership_inference(pt)` for `pt ∈ {cnn, dpcnn10, dpcnn200}`, across all 4 clients, and writes:
+
+- `{privacy_type}_evaluation_results.png` — per-client confidence histograms + confusion matrices
+- `privacy_model_comparison.csv` — accuracy, positive/negative precision & recall, F1
+- `{privacy_type}_submission_file.csv` — challenge predictions
+
+### Part 2 — Hyperparameter tuning against DPCNN10, Client 3
+
+`optimize_parameters_client3()` sweeps the attack's `batch_size ∈ {16, 32, 64, 128}` and `epochs ∈ {5, 10, 20, 30}`. Objective is framed from the **defender's** side: **lower attack F1 is better**. Outputs:
+
+- `client3_parameter_optimization.png`
+- `client3_best_confusion_matrix.png`
+- `optimized_hyperparameters.json`
+
+Threshold sweep helper `analyze_threshold_effect(pt, thresholds=[0.3..0.8])` produces `{privacy_type}_threshold_analysis.{png,csv}`.
+
+---
+
+## Metrics
+
+Every run reports: accuracy, member (positive) precision/recall, non-member (negative) precision/recall, F1, full confusion matrix, and member-vs-non-member probability histograms.
+
+---
+
+## Requirements
+
+- Python 3.10+, PyTorch, torchvision, torchinfo
+- `adversarial-robustness-toolbox`
+- numpy, pandas, matplotlib, seaborn
+
+Notebook was developed on Google Colab; dataset + `attack_targets/` tree must be mounted at the working directory before the evaluation cells are run.
+
+---
+
+## Usage
+
+Open `MembershipInferenceFL.ipynb` and run top-to-bottom. Main entry points:
+
+```python
+# Part 1: all three privacy types, all four clients
+compare_models()
+
+# Part 2: tune attack hyperparameters on DPCNN10 / client 3
+optimize_parameters_client3()
+
+# Single privacy type
+results = evaluate_membership_inference("cnn")   # or "dpcnn10", "dpcnn200"
+visualize_results(results, "cnn")
+```
+
+---
+
+## Repo Contents
+
+| File | Purpose |
+|------|---------|
+| `MembershipInferenceFL.ipynb` | Full attack + experiments pipeline (primary artifact) |
+| `Federated Learning Final Report.docx` | Final report — documents the earlier TFF/Pima branch and the pivot |
+````
