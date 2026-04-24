@@ -1,4 +1,3 @@
-````markdown
 # Membership Inference Attack on Federated Learning (NIST PPFL Genomics)
 
 Black-box Membership Inference Attack (MIA) against CNN target models trained on the **NIST PPFL Soybean Genomics** dataset under three privacy regimes (No-DP / DP ε=10 / DP ε=200). Implemented in PyTorch with IBM's [Adversarial Robustness Toolbox (ART)](https://github.com/Trusted-AI/adversarial-robustness-toolbox).
